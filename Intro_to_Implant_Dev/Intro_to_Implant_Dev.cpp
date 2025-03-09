@@ -20,8 +20,6 @@ INT main(VOID) {
 	string Name{ "" };
 	cout << "Hey! What is your name: " << endl;
 	cin >> Name;
-	cout << "Press Enter to trigger debugger and VEH function..." << endl;
-	getchar();
 
 	__debugbreak(); // Trigger BP exception here
 
