@@ -23,5 +23,6 @@ INT main(VOID) {
 
 	__debugbreak(); // Trigger BP exception here
 
+	cout << "Nice to Meet you, " << Name << " observe anything fishy today?" << endl;
 	return 0;
 }
