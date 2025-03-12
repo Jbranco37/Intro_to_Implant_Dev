@@ -180,10 +180,8 @@ LONG CALLBACK NewExecHandler(PEXCEPTION_POINTERS pExceptionInfo) {
 	}
 
 	cout << "[+] Current Address @ RIP: 0x" << hex << pCtx->Rip << endl;
-	*(DWORD64*)pCtx->Rip = reinterpret_cast<DWORD64>(g_MyFunc);  // Modify RIP to g_MyFunc
+	pCtx->Rip = reinterpret_cast<DWORD64>(g_MyFunc);  // Modify RIP to g_MyFunc
 	cout << "[+] New Address @ RIP: 0x" << hex << pCtx->Rip << endl;
-	pCtx->Rsp -= 8;
-	*(DWORD64*)pCtx->Rsp = reinterpret_cast<DWORD64>(g_MyOtherFunc);
 	if (pCtx->Rip == (DWORD64)g_MyFunc) {
 		cout << "[+] Now directing execution to g_MyFunc Address" << endl;
 	}
